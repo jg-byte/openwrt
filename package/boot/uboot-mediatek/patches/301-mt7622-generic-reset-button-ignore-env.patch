@@ -48,7 +48,7 @@
  #ifdef CONFIG_ENABLE_NAND_NMBM
 --- a/arch/arm/mach-mediatek/Kconfig
 +++ b/arch/arm/mach-mediatek/Kconfig
-@@ -215,4 +215,11 @@ config MTK_TZ_MOVABLE
+@@ -218,4 +218,11 @@ config MTK_TZ_MOVABLE
  	select OF_SYSTEM_SETUP
  	bool
  

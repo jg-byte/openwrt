@@ -1,0 +1,106 @@
+From: Jay G <jg.volunteer@pm.me>
+Date: Sun, 15 Nov 2026 15:10:00 -0500
+Subject: [PATCH] arm: mediatek: seed the kernel RNG from the hardware RNG
+
+Linux needs random numbers early in boot, before its MediaTek hardware
+RNG driver is ready. Without another early entropy source, slab
+freelist randomization can run before the kernel RNG is fully
+initialized.
+
+U-Boot already reads the hardware RNG for kernel address
+randomization. Also pass a 64-byte seed to Linux through
+/chosen/rng-seed. If the read succeeds and Linux trusts the seed, it
+can initialize its RNG while reading the device tree. This also
+supplies a seed when CONFIG_HW_RANDOM_MTK is disabled.
+
+Add board_rng_seed() for U-Boot proper, and enable BOARD_RNG_SEED by
+default when DM_RNG is enabled and MEASURED_BOOT is disabled. Continue
+booting if seeding fails.
+
+Signed-off-by: Jay G <jg.volunteer@pm.me>
+---
+ arch/arm/mach-mediatek/Kconfig |  3 ++
+ arch/arm/mach-mediatek/cpu.c   | 51 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 54 insertions(+)
+
+--- a/arch/arm/mach-mediatek/Kconfig
++++ b/arch/arm/mach-mediatek/Kconfig
+@@ -1,5 +1,8 @@
+ if ARCH_MEDIATEK
+ 
++config BOARD_RNG_SEED
++	default y if DM_RNG && !MEASURED_BOOT
++
+ config SYS_SOC
+ 	default "mediatek"
+ 
+--- a/arch/arm/mach-mediatek/cpu.c
++++ b/arch/arm/mach-mediatek/cpu.c
+@@ -3,12 +3,20 @@
+  * Copyright (C) 2018 MediaTek Inc.
+  */
+ 
++#include <abuf.h>
+ #include <cpu_func.h>
+ #include <dm.h>
++#include <fdt_support.h>
+ #include <init.h>
++#include <log.h>
++#include <malloc.h>
++#include <rng.h>
+ #include <wdt.h>
+ #include <dm/uclass-internal.h>
+ #include <linux/arm-smccc.h>
++#include <linux/compiler.h>
++#include <linux/errno.h>
++#include <linux/string.h>
+ #include <linux/types.h>
+ 
+ #define MTK_SIP_PLAT_BINFO ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_64, \
+@@ -76,3 +84,46 @@ u32 mediatek_sip_segment_name(void)
+ 
+ 	return 0;
+ }
++
++#if !defined(CONFIG_XPL_BUILD) && IS_ENABLED(CONFIG_BOARD_RNG_SEED)
++/* Read hardware entropy for /chosen/rng-seed; boards may override. */
++__weak int board_rng_seed(struct abuf *buf)
++{
++	struct udevice *dev;
++	size_t len = 64;
++	u8 *seed;
++	int ret;
++
++	if (!buf)
++		return -EINVAL;
++
++	if (!CONFIG_IS_ENABLED(DM_RNG))
++		return -ENODEV;
++
++	ret = uclass_first_device_err(UCLASS_RNG, &dev);
++	if (ret) {
++		if (ret == -ENODEV)
++			log_debug("rng-seed: no RNG device\n");
++		else
++			log_warning("rng-seed: RNG probe failed (%d)\n", ret);
++		return ret;
++	}
++
++	seed = calloc(1, len);
++	if (!seed)
++		return -ENOMEM;
++
++	ret = dm_rng_read(dev, seed, len);
++	if (ret) {
++		log_warning("rng-seed: RNG read failed (%d)\n", ret);
++		memset(seed, 0, len);
++		barrier_data(seed);
++		free(seed);
++		return ret;
++	}
++
++	abuf_init_move(buf, seed, len);
++
++	return 0;
++}
++#endif /* !defined(CONFIG_XPL_BUILD) && IS_ENABLED(CONFIG_BOARD_RNG_SEED) */
