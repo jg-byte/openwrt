@@ -480,8 +480,7 @@ uc_hostapd_bss_delete(uc_vm_t *vm, size_t nargs)
 	hostapd_remove_iface_bss_conf(iface->conf, hapd->conf);
 	hostapd_config_free_bss(hapd->conf);
 #ifdef CONFIG_IEEE80211BE
-	if (hapd->mld)
-		hapd->mld->refcount--;
+	hostapd_mld_ref_dec(hapd);
 #endif
 	os_free(hapd);
 
@@ -591,8 +590,7 @@ deinit_ctrl:
 free_hapd:
 	hostapd_free_hapd_data(hapd);
 #ifdef CONFIG_IEEE80211BE
-	if (hapd->mld)
-		hapd->mld->refcount--;
+	hostapd_mld_ref_dec(hapd);
 #endif
 	os_free(hapd);
 	hostapd_cleanup_unused_mlds(iface->interfaces);
@@ -622,7 +620,7 @@ uc_hostapd_iface_set_bss_order(uc_vm_t *vm, size_t nargs)
 		struct hostapd_data *bss;
 
 		bss = ucv_resource_data(ucv_array_get(bss_list, i), "hostapd.bss");
-		if (bss->iface != iface)
+		if (!bss || bss->iface != iface)
 			goto free;
 
 		for (size_t k = 0; k < i; k++)
